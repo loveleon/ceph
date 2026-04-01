@@ -516,6 +516,41 @@ def task(ctx, config):
     assert len(out) >= 1
     assert bucket_name in out;
 
+    # TESTCASE 'bucket-list-versioned','bucket','list','versioned bucket with --object-version marker','succeeds'
+    # Enable versioning on the bucket
+    connection.put_bucket_versioning(
+        Bucket=bucket_name,
+        VersioningConfiguration={'Status': 'Enabled'}
+    )
+
+    # Create exactly 3 versions of a unique object
+    unique_obj_key = 'test-versioned-obj-' + str(int(time.time()))
+    connection.put_object(Bucket=bucket_name, Key=unique_obj_key, Body=b'version1')
+    connection.put_object(Bucket=bucket_name, Key=unique_obj_key, Body=b'version2')
+    connection.put_object(Bucket=bucket_name, Key=unique_obj_key, Body=b'version3')
+
+    # List with marker (name only) and max-entries=3, should get exactly 3 versions
+    (err, out) = rgwadmin(ctx, client, [
+            'bucket', 'list', '--bucket', bucket_name,
+            '--marker', unique_obj_key,
+            '--max-entries', '3'], check_status=True)
+    assert len(out) == 3, f"Expected exactly 3 versions, got {len(out)}"
+    assert all(v['name'] == unique_obj_key for v in out), "All entries should have the same object name"
+
+    # Now use --marker with --object-version to paginate from the second entry
+    # This should return only the third entry
+    second_instance = out[1]['instance']
+    (err, out2) = rgwadmin(ctx, client, [
+            'bucket', 'list', '--bucket', bucket_name,
+            '--marker', unique_obj_key,
+            '--object-version', second_instance,
+            '--max-entries', '1'], check_status=True)
+
+    # Should get exactly 1 result, and it should be the third entry from the first list
+    assert len(out2) == 1, f"Expected exactly 1 result, got {len(out2)}"
+    assert out2[0]['name'] == out[2]['name'], "Result should match third entry name"
+    assert out2[0]['instance'] == out[2]['instance'], "Result should match third entry instance"
+
     # TESTCASE 'max-bucket-limit,'bucket','create','4 buckets','5th bucket fails due to max buckets == 4'
     connection.create_bucket(Bucket=bucket_name + '2')
     connection.create_bucket(Bucket=bucket_name + '3')
